@@ -258,8 +258,18 @@ class QlieTextTests(unittest.TestCase):
         self.assertEqual(rows, [{'name': '？？？', 'message': 'Hello\nworld'}, {'message': 'Narration'}])
         self.assertEqual(imos.patch(script, rows), script)
         rows[0]['message'] = 'joined'
+        result = imos.patch(script, rows)
+        self.assertEqual(imos.rows(result), rows)
+        self.assertNotIn('world', result)
+        more = imos.rows(script)
+        more[0]['message'] = 'a\nb\nc'
         with self.assertRaises(ValueError):
-            imos.patch(script, rows)
+            imos.patch(script, more)
+        pc_line = 'Hello\r\n[spd,0][pc,A poem][spd]\r\n\r\n'
+        pc_rows = imos.rows(pc_line)
+        pc_rows[0]['message'] = 'short'
+        with self.assertRaises(ValueError):
+            imos.patch(pc_line, pc_rows)
 
     def test_injection_and_unknown_dialects(self):
         for i, text in [(0, '^command'), (0, '[newtag]'), (2, 'bad,parameter'), (3, 'new,choice')]:
@@ -283,6 +293,7 @@ class QlieWorkflowTests(unittest.TestCase):
             (game / 'a.pack').write_bytes(archive(files))
             (game / 'b.pack').write_bytes(archive([('scenario/scene.s', b'Another version\r\n')]))
             output = game / 'extract'
+            output.mkdir()
             report = extract(game, output, archives=['a.pack', 'b.pack'], exe='game.exe', key_file='key.fkey')
             self.assertEqual(report['counts']['exported_scripts'], 2)
             self.assertEqual(report['counts']['empty_scripts'], 1)
@@ -292,6 +303,7 @@ class QlieWorkflowTests(unittest.TestCase):
             rows[0] = {'name': 'エリス', 'message': 'Longer message'}
             rows[-1]['message'] = 'Longer save title'
             (output / 'gt_output' / Path(first['json']).name).write_text(json.dumps(rows), encoding='utf-8')
+            (game / 'rebuilt').mkdir()
             result = repack(game, output, game / 'rebuilt')
             self.assertEqual(len(result['archives']), 1)
             self.assertEqual(result['archives'][0]['changed'], 1)

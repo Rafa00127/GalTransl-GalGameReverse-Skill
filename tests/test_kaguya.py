@@ -77,8 +77,11 @@ class KaguyaMessageTests(unittest.TestCase):
         changed[0]["name"] = changed[1]["name"] = "別の長い\n名前"
         self.assertEqual(export(inject(source, rows, manifest, changed))[0], changed)
         changed[0]["name"] = changed[1]["name"] = "一行に変更"
+        self.assertEqual(export(inject(source, rows, manifest, changed))[0], changed)
+        longer = copy.deepcopy(rows)
+        longer[0]["name"] = longer[1]["name"] = "長い\n\n名前"
         with self.assertRaises(ValueError):
-            inject(source, rows, manifest, changed)
+            inject(source, rows, manifest, longer)
 
     def test_inconsistent_name_controls_encoding_and_manifest_rejected(self):
         data = kaguya.write_message_dat(document())
@@ -90,13 +93,17 @@ class KaguyaMessageTests(unittest.TestCase):
         changed = copy.deepcopy(rows)
         changed[3]["name"] = "主人公"
         invalid.append(changed)
-        for text in ["改行なし", "\n位置変更", "NUL\0\n", "絵文字😀\n"]:
+        for text in ["\n位置変更", "改行\n増加\n", "NUL\0\n", "絵文字😀\n"]:
             changed = copy.deepcopy(rows)
             changed[0]["message"] = text
             invalid.append(changed)
         for changed in invalid:
             with self.assertRaises((ValueError, UnicodeError)):
                 inject(data, rows, manifest, changed)
+        # Fewer lines than the source are allowed.
+        shorter = copy.deepcopy(rows)
+        shorter[0]["message"] = "改行なし"
+        self.assertEqual(export(inject(data, rows, manifest, shorter))[0], shorter)
         altered = copy.deepcopy(manifest)
         altered["records"][0]["locator"]["message_index"] = 2
         with self.assertRaises(ValueError):
@@ -153,11 +160,13 @@ class KaguyaWorkflowTests(unittest.TestCase):
             (root / "scr.arc").write_bytes(link_file([("開始.scr", 0, b"[SCR-Ver5.1]test")]))
             (root / "params.dat").write_bytes(b"opaque-params")
             out = root / "extract"
+            out.mkdir()
             report = extract(root, out, verify_edits=True)
             self.assertEqual(report["json_rows"], 5)
             self.assertEqual(report["unused_message_indexes"], [2])
             self.assertEqual(report["link6"]["members"], 1)
             self.assertEqual((out / "roundtrip/message.dat").read_bytes(), original)
+            (out / 'empty-pack').mkdir()
             result = pack(out, out / "empty-pack")
             self.assertFalse(result["translation_provided"])
             self.assertEqual(result["changed_rows"], 0)

@@ -132,9 +132,13 @@ class RldTests(unittest.TestCase):
         self.assertEqual(new.ops[4].strings[0].split("\t")[:14], choice().split("\t")[:14])
         self.assertEqual(new.ops[4].strings[0].split("\t")[16:], choice().split("\t")[16:])
         self.assertEqual(new.plain[slice(*new.spans[5][0])], original.plain[slice(*original.spans[5][0])])
+        # A shorter translation may drop the source line break.
+        rows[0]["message"] = "Single line"
+        shorter = parse(crypt(rebuild_rld(self.raw, 17, rows, self.manifest, **self.kw), 17))
+        self.assertEqual(shorter.ops[0].strings[1], "Single line")
 
     def test_translation_rejections(self):
-        for index, field, value in ((0, "name", "Other"), (0, "message", "lost newline"),
+        for index, field, value in ((0, "name", "Other"), (0, "message", "added\nline\n"),
                                     (2, "name", "*"), (2, "message", "bad\0"),
                                     (2, "message", "<unknown>"), (4, "message", "bad\tchoice")):
             rows = copy.deepcopy(self.rows)
@@ -208,10 +212,12 @@ class WorkspaceTests(unittest.TestCase):
             (game / "rld/start.rld").write_bytes(raw)
             (game / "rld/system.rld").write_bytes(crypt(script(op(0x1234), tag=b""), 23))
             work = root / "extracted"
+            work.mkdir()
             info = extract(game, work, exe=game / "engine.exe", seed=23, smoke_test=True)
             self.assertEqual((info["json_files"], info["rows"], info["identity_verified"]), (1, 3, 2))
             self.assertEqual(len(list((work / "gt_input").glob("*.json"))), 1)
             self.assertEqual((work / "rebuilt/roundtrip/rld/start.rld").read_bytes(), raw)
+            (root / 'empty').mkdir()
             self.assertEqual(rebuild(work, root / "empty")["changed_members"], [])
             with self.assertRaises(FileExistsError):
                 extract(game, work, seed=23)

@@ -214,10 +214,19 @@ class CatSystemDialogueTests(unittest.TestCase):
         self.assertEqual(exported.locators[1]['choice_span'], (9, 15))
         self.assertEqual(exported.orphan_names, (5, 8))
         self.assertEqual(exported.name_command_crossings, ((2, (3,)),))
-        self.assertIn("\n", exported.protected_tokens[0])
+        self.assertNotIn("\n", exported.protected_tokens[0])
         self.assertIn(r"\@", exported.protected_tokens[0])
         self.assertEqual(catsystem2.patch_dialogue(data, exported,
                                                    list(exported.rows)), data)
+        shorter = [dict(row) for row in exported.rows]
+        shorter[0] = dict(shorter[0], message=r"single line\@")
+        self.assertEqual(catsystem2.export_cst(
+            catsystem2.patch_dialogue(data, exported, shorter)).rows[0]["message"],
+            r"single line\@")
+        longer = [dict(row) for row in exported.rows]
+        longer[0] = dict(longer[0], message="three\nlines\nhere\\@")
+        with self.assertRaises(ValueError):
+            catsystem2.patch_dialogue(data, exported, longer)
 
     def test_choice_caption_growth_preserves_prefix_and_nontext_records(self):
         for compressed in (True, False):
@@ -280,8 +289,11 @@ class CatSystemDialogueTests(unittest.TestCase):
             (root / "scene.int").write_bytes(base)
             (root / "update01.int").write_bytes(update)
             (root / "broken.int").write_bytes(b"not-kif")
+            destination = root / f"{root.name}_extract"
+            destination.mkdir()
             summary = extract_game(root)
             output = Path(summary["output"])
+            self.assertEqual(output, destination)
             self.assertEqual(summary["overridden_cst_members"], 1)
             self.assertEqual(summary["scripts_exported"], 1)
             self.assertEqual(summary["parse_failures"], 1)
@@ -318,6 +330,7 @@ class CatSystemDialogueTests(unittest.TestCase):
             relative_root = root.relative_to(Path.cwd())
             (root / "scene.int").write_bytes(archive)
             (root / "cs2.exe").write_bytes(make_password_pe("test-pass"))
+            (root / "result").mkdir()
             summary = extract_game(relative_root, output="result")
             output = root / "result"
             self.assertEqual(Path(summary["output"]), output)

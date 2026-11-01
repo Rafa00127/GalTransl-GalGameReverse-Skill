@@ -16,12 +16,12 @@ description: 识别 galgame/visual novel 引擎与资源格式，解包并提取
    python /path/to/GalTransl-GalGameReverse-Skill/python/detect.py /path/to/game
    ```
    探测结果只作候选，继续核对文件头、结构、版本和配套文件。
-3. 从[引擎索引](#引擎索引)加载对应页面及必要指南。未识别格式可查询 [catalog](catalog/formats.json)；`source_only` 仅表示来源注册状态，能力以随包实现与测试为准。
+3. 从[引擎索引](#引擎索引)加载对应页面及必要指南。未识别格式用 [目录查询器](tools/query_catalog.py) 按 Tag、扩展名或魔数筛选，见[查询方法](guides/detection.md#搜索资料目录)，不要整份读取目录 JSON；`source_only` 仅表示来源注册状态，能力以随包实现与测试为准。
 4. 证据冲突或算法缺失时，保留诊断，继续有界分析，按[增补指南](guides/extending-engines.md)补齐实现与合成测试后重试。没有真实样本时只报告合成验证；移植保留许可，GPL 来源本身不是阻塞理由。
 
 ## 输出目录与 GalTransl 交接
 
-默认在游戏目录中新建 `<游戏名>_extract/`，存在则换新名字；用户指定其他输出位置时沿用相同结构。
+默认在游戏目录中新建 `<游戏名>_extract/`，可复用已存在的空目录，非空则换新名字；用户指定其他输出位置时沿用相同结构。
 
 ```text
 <游戏目录>/<游戏名>_extract/
@@ -33,7 +33,7 @@ description: 识别 galgame/visual novel 引擎与资源格式，解包并提取
 ```
 
 - JSON 使用原剧本名；重名时加可区分来源的后缀并记录映射，不用内部序号替代已知原名。无可翻译行的成员标记 `empty`，不在 `gt_input` 生成空 JSON 或占位文件。
-- 新产物使用 [write_new_tree](python/common/safety.py) 等不覆盖写入方式，目标存在时换名，不先删再写。重跑须排除全部结果目录，避免把产物再次当作输入。
+- 新产物使用 [write_new_tree](python/common/safety.py) 等不覆盖写入方式，目标须不存在或为已存在的普通空目录；非空时换名，不先删已有内容再写。已有工作区中可分别向空的 `gt_input/`、`original/` 等目录写出，不向非空工作区根目录合并。重跑须排除全部结果目录，避免把产物再次当作输入。
 - 译文与原文按平铺文件名配对；缺译文的成员保留原样，不猜配未知文件名。回填前按[交换契约](guides/roundtrip-contract.md)校验。
 - **误改 `gt_input` 时**：提醒用户，将修改按同名保存到 `gt_output`，已有不同内容先备份；确认保存后，由 agent 从哈希校验通过的原始数据重新导出并恢复输入，不改 manifest 绕过校验。
 - **默认由 agent 执行回写和打包。** 告诉用户：“可以把 `<实际路径>/gt_input` 导入 GalTransl；译文按同名文件放回 `<实际路径>/gt_output` 后告诉我，我来校验、回写并生成补丁或重封包。”引擎页命令供 agent 执行；仅在用户要求自行操作或环境无法执行时交付命令并说明原因。
@@ -105,7 +105,7 @@ JSON 中姓名在正文前；偏移、原字节和控制码映射放入 metadata
 - [独立 Python API 与运行约定](guides/python-reference-api.md)
 - [通用集成步骤：导出 JSON、保存 manifest、回填新脚本](guides/worked-roundtrip.md)
 - [增补未知引擎或游戏变体](guides/extending-engines.md)
-- [完整归档/脚本格式 catalog](catalog/formats.json)：资料目录，不是 Python 支持列表。
+- [归档/脚本格式 catalog](catalog/formats.json)：无损去重的资料目录，用[查询器](tools/query_catalog.py)分页读取，不是 Python 支持列表。
 - [归档布局与解密资料](catalog/archive-notes.md)：按格式查阅索引、key 派生和成员解码规则；资料不代表已实现。
 - [脚本与字库格式研究资料](catalog/format-research.md)：补充 VM、字符串池、显示控制和位图字库的方言证据与待核条件，不是运行支持列表。
 - [上游实际注册清单](catalog/source-registries.json)：含预设、工具线索及禁用/不完整实现的区分。

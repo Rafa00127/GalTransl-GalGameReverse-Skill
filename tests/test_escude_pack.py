@@ -39,7 +39,9 @@ class EscudePackTests(unittest.TestCase):
             root = Path(tmp)
             game = fixture.EscudeExtractTests().setup_game(root)
             work = root / 'work'
+            work.mkdir()
             extract(game, work)
+            (root / 'roundtrip').mkdir()
             result = pack(work, root / 'roundtrip')
             self.assertTrue(result['byte_identical'])
             rows = json.loads((work / 'gt_input/scene.json').read_bytes())
@@ -75,7 +77,7 @@ class EscudePackTests(unittest.TestCase):
                     elif case == 'encoding':
                         rows[0]['message'] = '简体中文<r>测试'
                     else:
-                        rows[0]['message'] = '本文'
+                        rows[0]['message'] += '<r>'
                     (work / 'gt_output/scene.json').write_text(json.dumps(rows), encoding='utf-8')
                 with self.assertRaises(ValueError):
                     pack(work, root / 'failed')

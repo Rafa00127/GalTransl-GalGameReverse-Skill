@@ -17,7 +17,7 @@ import stat
 from ..archives import med as archive
 from ..common.binary import FormatError
 from ..common.contract import dump_rows, load_json, sha256
-from ..common.safety import _check_existing_ancestors, validate_names, write_new_tree
+from ..common.safety import _check_existing_ancestors, validate_names, write_new_tree, validate_new_tree_destination
 from . import med_script as script
 
 
@@ -88,8 +88,7 @@ def member_info(entry, data):
 
 def extract(source, output, key=None):
     source, output = Path(source), Path(output)
-    if output.exists():
-        raise FileExistsError(output)
+    validate_new_tree_destination(output)
     validate_names([source.name])
     data, entries = archive.read_archive(source)
     container, coded = container_profile(data, key)
@@ -139,7 +138,7 @@ def extract(source, output, key=None):
         + ("该容器成员按显式密钥编码；work 区不保存密钥，只记录其 SHA-256。\n" if coded else "")
         + "gt_input：UTF-8 JSON，姓名在正文上方；只含非空脚本。\n"
         "gt_output：译文按同名放回后告诉 agent，由 agent 校验、回写并生成新归档。\n"
-        "保持行数、顺序、姓名字段和控制符；物理分行保持独立，不合并条目。\n"
+        "保持顺序、姓名字段和控制符；换行可减少但不可新增，物理分行保持独立，不合并条目。\n"
         "同一姓名指令覆盖的多条正文须使用一致译名；关联见 metadata 中的 name_frame。\n"
         "章节/存档标题也已导出，角色见 metadata；不要修改 original、metadata 或 gt_input。\n"
         "original 保存原归档和脚本；rebuilt/roundtrip 经过完整读写并逐字节核对。\n"
@@ -153,8 +152,7 @@ def extract(source, output, key=None):
 
 def pack(workspace, output, key=None):
     workspace, output = Path(workspace), Path(output)
-    if output.exists():
-        raise FileExistsError(output)
+    validate_new_tree_destination(output)
     report = load_json(read_bounded(workspace / "reports/extraction.json"))
     if report.get("engine") != "med" or report.get("profile") != script.PROFILE:
         raise FormatError("unsupported MED workspace profile")

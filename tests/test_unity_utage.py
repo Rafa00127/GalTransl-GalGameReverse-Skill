@@ -198,6 +198,16 @@ class UtageTests(unittest.TestCase):
             with self.subTest(candidate=candidate), self.assertRaises(FormatError):
                 u.patch_book(raw, {0: candidate})
 
+    def test_shorter_translation_may_drop_a_line_break(self):
+        raw = book_bytes()
+        rows = u.export_book(u.read_book(raw))[0]["rows"]
+        rows[0]["message"] = "短い<param=x>"
+        shorter = u.read_book(u.patch_book(raw, {0: rows}))
+        self.assertEqual(u.export_book(shorter)[0]["rows"], rows)
+        rows[0]["message"] = "原文<param=x>\n\n末尾"
+        with self.assertRaises(FormatError):
+            u.patch_book(raw, {0: rows})
+
     def test_unknown_command_not_silently_dropped(self):
         raw = book_bytes([grid_bytes(custom=[(["Command", "Arg1", "Text"], False, False),
             (["PluginDialogue", "", "表示"], False, False)])])
@@ -251,12 +261,14 @@ class WorkspaceTests(unittest.TestCase):
         return workflow.extract(self.source, self.work, target="Game_Data/sharedassets0.assets")
 
     def test_extract_pack_and_readback(self):
+        self.work.mkdir()
         report = self.extract()
         self.assertEqual((report["book_count"], report["rows"]), (1, 2))
         self.assertEqual((self.work / "rebuilt/roundtrip/Game_Data/sharedassets0.assets").read_bytes(), self.source.read_bytes())
         rows = json.loads((self.work / "gt_input/opening.json").read_text(encoding="utf-8"))
         rows[0]["message"] = "中文<param=x>\n不同长度的第二行。"
         (self.work / "gt_output/opening.json").write_bytes(workflow.json_bytes(rows))
+        (self.root / "pack").mkdir()
         result = workflow.pack(self.work, self.root / "pack")
         self.assertEqual(result["changed_objects"], [10])
         self.assertEqual(json.loads((self.root / "pack/readback/gt_input/opening.json").read_bytes()), rows)

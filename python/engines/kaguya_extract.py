@@ -15,7 +15,7 @@ import stat
 from ..archives import kaguya_link as link
 from ..common.binary import FormatError
 from ..common.contract import dump_rows, load_json, make_manifest, sha256, validate_translation
-from ..common.safety import write_new_tree
+from ..common.safety import write_new_tree, validate_new_tree_destination
 from . import kaguya
 
 VARIANT = "ver4-cp932-preserved-suffix"
@@ -58,8 +58,8 @@ def export(data: bytes) -> tuple[list[dict], dict]:
     rows, locators = _rows(doc)
     policies = ["absent" if "name" not in row else "context" if row["name"] == "％" else "writable"
                 for row in rows]
-    # Keep line structure and the engine's special F040/percent codepoint.
-    tokens = [[t for t in ("\n", "％") if t in row["message"]] for row in rows]
+    # The F040/percent codepoint is protected; line breaks may only be removed.
+    tokens = [["％"] if "％" in row["message"] else [] for row in rows]
     manifest = make_manifest(
         engine="kaguya", variant=VARIANT, reference="python/engines/kaguya_extract.py",
         sources={"message.dat": data}, rows=rows, locators=locators, encoding="cp932",
@@ -85,10 +85,12 @@ def inject(data: bytes, original_rows: list[dict], manifest: dict, translated_ro
                 continue
             if any(ord(c) < 32 and c != "\n" for c in text):
                 raise FormatError("unsupported Kaguya text control")
-            if text.count("\n") != before[field].count("\n"):
-                raise FormatError("Kaguya line count changed")
-            if text.endswith("\n") != before[field].endswith("\n"):
-                raise FormatError("Kaguya final newline changed")
+            if text.count("\n") > before[field].count("\n"):
+                raise FormatError("Kaguya translation uses more lines than the source")
+            # Do not create an empty first/last line that the source lacked.
+            if ((text.startswith("\n") and not before[field].startswith("\n"))
+                    or (text.endswith("\n") and not before[field].endswith("\n"))):
+                raise FormatError("Kaguya translation adds a blank edge line")
             if text.count("％") != before[field].count("％"):
                 raise FormatError("Kaguya special percent codepoint changed")
             encoded = kaguya._encode(text)
@@ -132,8 +134,7 @@ def inject(data: bytes, original_rows: list[dict], manifest: dict, translated_ro
 
 
 def extract(game: Path, destination: Path, *, verify_edits: bool = False) -> dict:
-    if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f"refusing existing output: {destination}")
+    validate_new_tree_destination(destination)
     data = _read(game / "message.dat")
     doc = kaguya.read_message_dat(data, allow_trailer=True)
     rows, manifest = export(data)
@@ -203,8 +204,7 @@ def extract(game: Path, destination: Path, *, verify_edits: bool = False) -> dic
 
 
 def pack(workspace: Path, destination: Path, *, translations: Path | None = None) -> dict:
-    if destination.exists() or destination.is_symlink():
-        raise FileExistsError(f"refusing existing output: {destination}")
+    validate_new_tree_destination(destination)
     report = load_json(_read(workspace / "reports/extraction.json"), max_bytes=MAX_BYTES)
     if report.get("schema") != "kaguya-workspace/1" or report.get("variant") != VARIANT:
         raise FormatError("unsupported Kaguya workspace")

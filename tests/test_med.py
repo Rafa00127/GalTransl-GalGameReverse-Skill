@@ -128,12 +128,16 @@ class ScriptTests(unittest.TestCase):
                 med.export(bad)
 
     def test_control_changes_and_nuls_refused(self):
-        for change in ("失われた改行", "章\\X一", "章\\N一\0", "章\\N一@x"):
+        for change in ("章\\X一", "章\\N一\0", "章\\N一@x", "章\\N一\\N二"):
             with self.subTest(change=change):
                 rows, m = med.export(example())
                 rows[-1]["message"] = change
                 with self.assertRaises(FormatError):
                     med.rebuild(example(), rows, m)
+        # The \\N break may be removed when the translation needs fewer lines.
+        rows, m = med.export(example())
+        rows[-1]["message"] = "失われた改行"
+        self.assertEqual(med.export(med.rebuild(example(), rows, m))[0], rows)
 
     def test_malformed_layouts(self):
         base = example()
@@ -283,10 +287,12 @@ class WorkflowTests(unittest.TestCase):
             src = root / "md_scr.med"
             src.write_bytes(bundle([("scene", example()), ("empty", script(b""))]))
             work = root / "work"
+            work.mkdir()
             report = workflow.extract(src, work)
             self.assertEqual(report["json_files"], 1)
             self.assertEqual((work / "rebuilt/roundtrip/md_scr.med").read_bytes(), src.read_bytes())
             noedit = root / "noedit"
+            noedit.mkdir()
             workflow.pack(work, noedit)
             self.assertEqual((noedit / "md_scr.med").read_bytes(), src.read_bytes())
             rows = load_json((work / "gt_input/scene.json").read_bytes())
