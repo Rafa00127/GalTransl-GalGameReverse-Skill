@@ -6,7 +6,7 @@ import unittest
 
 from python.archives import med as archive
 from python.common.binary import FormatError
-from python.common.contract import dump_rows, load_json
+from python.common.contract import dump_rows, load_json, sha256
 from python.common.jis_workflow import prepare_translations
 from python.engines import med_extract as workflow
 from python.engines import med_script as med
@@ -37,6 +37,20 @@ def bundle(items, *, gap=b"", trailer=b"TAIL"):
         table.extend(struct.pack("<II", len(data), offset))
         body.extend(data)
         offset += len(data)
+    return header + table + body + trailer
+
+
+def coded_bundle(items, key, *, gap=b"", trailer=b"TAIL", width=26):
+    """MDE0 container: 14-byte name slot, one undocumented u32, then length/offset."""
+    header = b"MDE0" + struct.pack("<HH", width, len(items)) + b"OPAQUE!!"
+    offset = 16 + width * len(items) + len(gap)
+    table, body = bytearray(), bytearray(gap)
+    for ordinal, (name, data) in enumerate(items):
+        coded = archive.transform_member(data, key, encrypt=True)
+        table.extend(name.encode("cp932").ljust(width - 12, b"\0"))
+        table.extend(struct.pack("<III", ordinal * 7 + 1, len(coded), offset))
+        body.extend(coded)
+        offset += len(coded)
     return header + table + body + trailer
 
 
@@ -189,6 +203,77 @@ class ArchiveTests(unittest.TestCase):
     def test_unknown_replacement(self):
         with self.assertRaises(FormatError):
             archive.rebuild(bundle([("a", b"1")]), {"z": b"2"})
+
+
+class CodedContainerTests(unittest.TestCase):
+    key = b"MITSUKI" * 4
+
+    def test_member_schedule_direction_and_phase(self):
+        data = bytes(range(0x40))
+        coded = archive.transform_member(data, self.key, encrypt=True)
+        self.assertEqual(coded[:0x10], data[:0x10])
+        self.assertEqual(archive.transform_member(coded, self.key), data)
+        for p in range(0x10, len(data)):
+            self.assertEqual(coded[p], (data[p] - self.key[(p - 0x10) % len(self.key)]) & 0xFF)
+        # Counting the phase from the member start instead would differ.
+        self.assertNotEqual(coded[0x10:], bytes((data[p] - self.key[p % len(self.key)]) & 0xFF
+                                                for p in range(0x10, len(data))))
+
+    def test_explicit_key_parsing(self):
+        self.assertEqual(workflow.parse_key("ascii:AB"), b"AB")
+        self.assertEqual(workflow.parse_key("hex:4142"), b"AB")
+        self.assertIsNone(workflow.parse_key(None))
+        for bad in ("AB", "spec:41", "hex:zz", "ascii:\u4e2d", "hex:"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    workflow.parse_key(bad)
+
+    def test_index_read_and_no_edit_roundtrip(self):
+        source = coded_bundle([("scene", example()), ("empty", script(b""))], self.key)
+        self.assertEqual(archive.profile(source), archive.ENCRYPTED_PROFILE)
+        entries = archive.index(io.BytesIO(source), len(source))
+        self.assertEqual([e.name for e in entries], ["scene", "empty"])
+        plain = archive.read_member(io.BytesIO(source), entries[0], self.key)
+        self.assertEqual(med.export(plain)[0], med.export(example())[0])
+        self.assertEqual(archive.rebuild(source, {}), source)
+        self.assertEqual(archive.rebuild(source, {}, self.key), source)
+
+    def test_replacement_is_recoded_and_verified(self):
+        source = coded_bundle([("scene", example())], self.key)
+        rows, manifest = med.export(example())
+        rows[0]["message"] = "長い文章に変更するテスト。"
+        rebuilt = archive.rebuild(source, {"scene": med.rebuild(example(), rows, manifest)}, self.key)
+        self.assertGreater(len(rebuilt), len(source))
+        entry = archive.index(io.BytesIO(rebuilt), len(rebuilt))[0]
+        decoded = archive.read_member(io.BytesIO(rebuilt), entry, self.key)
+        self.assertEqual(med.export(decoded)[0], rows)
+        with self.assertRaises(FormatError):
+            archive.rebuild(source, {"scene": med.rebuild(example(), rows, manifest)})
+        with self.assertRaises(FormatError):
+            archive.rebuild(bundle([("a", b"1234")]), {"a": b"5678"}, self.key)
+
+    def test_workflow_requires_and_reuses_key(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = root / "md_scr.med"
+            src.write_bytes(coded_bundle([("scene", example())], self.key))
+            with self.assertRaisesRegex(FormatError, "additive member schedule"):
+                workflow.extract(src, root / "nokey")
+            report = workflow.extract(src, root / "work", key=self.key)
+            self.assertEqual(report["container"], archive.ENCRYPTED_PROFILE)
+            self.assertEqual(report["key_sha256"], sha256(self.key))
+            self.assertEqual((root / "work/rebuilt/roundtrip/md_scr.med").read_bytes(), src.read_bytes())
+            rows = load_json((root / "work/gt_input/scene.json").read_bytes())
+            rows[0]["message"] = "変長の日本語に変更する。"
+            (root / "work/gt_output/scene.json").write_bytes(dump_rows(rows))
+            with self.assertRaisesRegex(FormatError, "differs from the extraction key"):
+                workflow.pack(root / "work", root / "wrong", key=b"X" * 8)
+            result = workflow.pack(root / "work", root / "changed", key=self.key)
+            self.assertEqual(result["changed_members"], ["scene"])
+            self.assertEqual(load_json((root / "changed/readback/gt_input/scene.json").read_bytes()), rows)
+            packed = (root / "changed/md_scr.med").read_bytes()
+            entry = archive.index(io.BytesIO(packed), len(packed))[0]
+            self.assertEqual(med.export(archive.read_member(io.BytesIO(packed), entry, self.key))[0], rows)
 
 
 class WorkflowTests(unittest.TestCase):

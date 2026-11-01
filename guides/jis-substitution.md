@@ -1,12 +1,15 @@
-# CP932 中文回注：公共 JSON JIS 流程
+# 兜底路线：CP932 脚本的公共 JIS 代理映射流程
 
-确认**脚本正文**使用 CP932 后，中文回注优先走本页的公共流程。不要为了 JIS 给每个引擎增加 codec 参数、专用开关、冲突检查和 hook 配置生成逻辑。引擎只负责原有的文本语义、长度/偏移、加密和归档读写；公共层负责 JSON 中真实中文与 CP932 代理字符的转换及显示核对。
+> **这是最后的选择。** 先看[中文入库路线](charset-replacement.md)：能改引擎读取编码为 GBK/UTF-8 并重建字库时，不要用本页。本页适用于正文存储必须保持 CP932、且加载路径无法改造的情况；代价是需要运行时 hook 或专用替换字体，常见副作用是字体不统一与 UI 乱码。
+
+确认**脚本正文必须保持 CP932** 后，中文回注走本页的公共流程。不要为了 JIS 给每个引擎增加 codec 参数、专用开关、冲突检查和 hook 配置生成逻辑。引擎只负责原有的文本语义、长度/偏移、加密和归档读写；公共层负责 JSON 中真实中文与 CP932 代理字符的转换及显示核对。
 
 ## 入口与适用条件
 
 - [jis_workflow.py](../python/common/jis_workflow.py)：通用 `prepare` / `finalize` CLI，以及不依赖引擎的 `prepare_translations` API。没有引擎分支或注册表，不修改全局 codec。
 - [jis_substitution.py](../python/common/jis_substitution.py)：SExtractor 固定映射、冲突检测、可选私用字符分配、配置及 hook 产物。仅依赖标准库，无需安装外部项目。
 - 工作区采用主 Skill 的 `original/metadata/reports/gt_input/gt_output` 结构；引擎接受 UTF-8 的最小 name/names/message JSON，并已有严格 CP932 writer 与真实重提取能力。
+- 先确认**已经放弃了 GBK/UTF-8 改造**（引擎字符集不可改、字库不可重建，或仅为快速验证文本），并在报告里写下理由；否则先回到[中文入库路线](charset-replacement.md)。
 - 必须确认**存储编码**。JSON 本身是 UTF-8，某些 manifest 的 encoding 也是交换层 UTF-8；都不能代替脚本编码证据。严格 shift_jis、UTF-8、UTF-16、GBK 不使用此流程，Kirikiri PSB/SCN 不因 XP3 文件名编码而触发它。
 - 原脚本已使用 UIF 替换或 tunneling 时先识别原映射。工作区声明已有 source/target 字符表或已启用旧映射时，公共准备器拒绝直接叠加；应先制定合并/还原方案。游戏目录已有 hook 也需检查，不能用新子集配置覆盖仍在使用的旧映射。
 

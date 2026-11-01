@@ -37,6 +37,7 @@ description: 识别 galgame/visual novel 引擎与资源格式，解包并提取
 - 译文与原文按平铺文件名配对；缺译文的成员保留原样，不猜配未知文件名。回填前按[交换契约](guides/roundtrip-contract.md)校验。
 - **误改 `gt_input` 时**：提醒用户，将修改按同名保存到 `gt_output`，已有不同内容先备份；确认保存后，由 agent 从哈希校验通过的原始数据重新导出并恢复输入，不改 manifest 绕过校验。
 - **默认由 agent 执行回写和打包。** 告诉用户：“可以把 `<实际路径>/gt_input` 导入 GalTransl；译文按同名文件放回 `<实际路径>/gt_output` 后告诉我，我来校验、回写并生成补丁或重封包。”引擎页命令供 agent 执行；仅在用户要求自行操作或环境无法执行时交付命令并说明原因。
+- **批量文本翻译不需要模型推理**：本 Skill 不带翻译器代码（仅定义 `gt_input`/`gt_output` 交接），自建调用时请关闭 thinking/reasoning、`temperature=0`、只回 JSON；开推理只会变慢、变贵，对逐句对译没有帮助。
 
 ## 必须遵守的边界
 
@@ -81,19 +82,25 @@ JSON 中姓名在正文前；偏移、原字节和控制码映射放入 metadata
 ## 译文回填流程
 
 1. 使用原提取器的同一版本/方言和完整原始数据，从 `gt_output` 读取译文；校验哈希、文件集合、条数、字段、姓名槽、控制码和编码。相同条数的重排不能由 sidecar 自动识别；缺少可靠对应关系时不猜配。
-2. **CP932 中文回注优先使用 [JIS 公共流程](guides/jis-substitution.md)**：在工作副本中生成代理 JSON，保留用户真实中文；调用原引擎 writer，重新提取重建资源，核对代理文字和还原中文。统一生成映射、`uif_config.json` 与部署说明，不逐引擎重复实现。其他编码或已有映射先核对兼容性，不直接改 GBK 或有损替换。
+2. **先定中文入库路线，按优先级：**
+   1. **首选 [改引擎字符集为 GBK/UTF-8](guides/charset-replacement.md)**：改读取编码与双字节判定，同步重建主字库/备用字库与 UI 定长串，writer 写入 GBK。不需要注入器与转区。
+   2. 次选：脚本层整体改用引擎已支持的编码（UTF-8/UTF-16/GBK），须实测加载路径支持，并同步长度、指针、配套表。
+   3. 兜底：文本保持 CP932，走 [JIS 代理映射公共流程](guides/jis-substitution.md)：工作副本生成代理 JSON、保留用户真实中文、调用原引擎 writer、重新提取资源核对代理文字与还原中文。
+
+   现有映射或旧 hook 先核对方向与兼容性，不叠加两次替换，也不用有损替换冒充编码支持。
 3. 按格式更新文本、长度、指针、跳转、字符串池、对齐及校验；严格编码并恢复压缩/加密。通用 `apply_edits()` 仅产生中间数据，仍须完成结构修复。
 4. 重解析并比对译文与非文本结构，按已确认加载规则生成松散补丁、补丁归档或重封包。格式往返不代表运行时可加载。
 5. 交代产物、数量、验证状态和未验证项，详见[验证与部署](guides/validation-and-deployment.md)。
 
-JIS 交付可将随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并写入新结果目录，无需另问复制许可；64 位游戏须另选兼容构建。最终说明配置路径及用法：将匹配位数的 DLL 和 `uif_config.json` 放到实际游戏 EXE 目录，或选用同批映射对应的专用替换字体。普通日文/繁体字体不能代替它；已有 DLL/配置须先检查合并。交付结果不等于已授权安装或验证显示。
+只有走兜底路线时，JIS 交付才需要随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并写入新结果目录，无需另问复制许可；64 位游戏须另选兼容构建。最终说明配置路径及用法：将匹配位数的 DLL 和 `uif_config.json` 放到实际游戏 EXE 目录，或选用同批映射对应的专用替换字体。普通日文/繁体字体不能代替它；已有 DLL/配置须先检查合并。交付结果不等于已授权安装或验证显示。
 
 ## 通用指南与资料
 
 - [引擎识别与档案安全](guides/detection.md)
 - [JSON、manifest 与身份/顺序契约](guides/roundtrip-contract.md)
 - [编码、控制码与重定位](guides/encoding-and-control-codes.md)
-- [CP932 中文回注：JIS 替换、UIF 配置与字体部署](guides/jis-substitution.md)
+- [中文入库路线：首选改引擎字符集为 GBK/UTF-8](guides/charset-replacement.md)
+- [兜底：CP932 + JIS 替换、UIF 配置与专用字体](guides/jis-substitution.md)
 - [验证、失败处理与部署](guides/validation-and-deployment.md)
 - [独立 Python API 与运行约定](guides/python-reference-api.md)
 - [通用集成步骤：导出 JSON、保存 manifest、回填新脚本](guides/worked-roundtrip.md)
@@ -116,7 +123,7 @@ JIS 交付可将随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并
 | Ail / SNL | [ail](engines/ail.md) |
 | AliceSoft：AI2 容器与 AIN 文本表 | [alicesoft](engines/alicesoft.md) |
 | ANIM：滚动密钥 DAT / SCE 局部参考 | [anim](engines/anim.md) |
-| ArcGameEngine：AGE 字符串池与 PAC 容器 | [arcgameengine](engines/arcgameengine.md) |
+| ArcGameEngine：AGE 字符串池算法 | [arcgameengine](engines/arcgameengine.md) |
 | ARCX 工具目录 / SCX.ARC 顺序记录 | [arcx](engines/arcx.md) |
 | Artemis Engine：AST 文本剧本（`.ast`） | [artemis-ast](engines/artemis-ast.md) |
 | Artemis Engine：SCP 文本剧本（`.txt` / `.iet`）与 pf8 多分卷 | [artemis-scp](engines/artemis-scp.md) |
@@ -133,30 +140,30 @@ JIS 交付可将随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并
 | Cyberworks：a0 的 S/T 长度块 | [cyberworks](engines/cyberworks.md) |
 | DigitalWorks / BunBun TAK | [digitalworks](engines/digitalworks.md) |
 | EAGLS / ALIS：SCPACK、文本尾加密与标签修复 | [eagls](engines/eagls.md) |
-| EmonEngine / EME | [emonengine](engines/emonengine.md) |
+| EmonEngine / EME：索引解密、LZSS 成员与剧本容器重封 | [emonengine](engines/emonengine.md) |
 | Emote PSB：资源包读取与内嵌资源导出 | [emote](engines/emote.md) |
-| Entis GLS：SRCXML 消息、选择属性与 CSX 容器 | [entis-gls](engines/entis-gls.md) |
+| Entis GLS：SRCXML 多语言消息、选择属性与 CSX 容器 | [entis-gls](engines/entis-gls.md) |
 | Escu:de：ESC-ARC2、分离消息文件与 ESCR1_00 | [escude](engines/escude.md) |
-| ExHibit：RLD 操作片段、间接姓名与有界 XOR | [exhibit](engines/exhibit.md) |
+| ExHibit：RLD v3 静态解密、文本提取与回注 | [exhibit](engines/exhibit.md) |
 | Favorite：HCB u8 字符串长度与绝对地址更新 | [favorite](engines/favorite.md) |
 | FlyingShine / PD2 | [flyingshine](engines/flyingshine.md) |
 | FrontWing / FRONTWING_ADV CSB | [frontwing](engines/frontwing.md) |
 | GSD：先 decode 的 v2 族 SPT 与 global.dat | [gsd](engines/gsd.md) |
-| GxEngine：V3 MWB 字符串、zlib 包装与 GXP 容器 | [gxengine](engines/gxengine.md) |
+| GxEngine：V3 MWB 字符串与 zlib 包装 | [gxengine](engines/gxengine.md) |
 | HCSystem / PACK | [hcsystem](engines/hcsystem.md) |
 | Hexenhaus：NORI 的 XOR53 固定槽 | [hexenhaus](engines/hexenhaus.md) |
 | HotSoup / HSP DPMX | [hotsoup](engines/hotsoup.md) |
 | ICE / 索引字表文本流 | [ice](engines/ice.md) |
 | IKURA / MPX、ISF | [ikura](engines/ikura.md) |
 | Ivory / fAGS OCB | [ivory](engines/ivory.md) |
-| Kaguya：message.dat ver4/早期分块、TBLSTR 与 LINK6 容器 | [kaguya](engines/kaguya.md) |
-| Kirikiri / KAG：有限 KS 文本往返与 TJS2 反编译阅读 | [kirikiri](engines/kirikiri.md) |
+| Kaguya：message.dat 与 LINK6 | [kaguya](engines/kaguya.md) |
+| Kirikiri / KAG：剧本提取、回填与 XP3 补丁 | [kirikiri](engines/kirikiri.md) |
 | Leaf / KCAP、SDT | [leaf](engines/leaf.md) |
 | Livemaker：外部导出的 Original text CSV 方言 | [livemaker](engines/livemaker.md) |
 | Majiro：MJO 异或与文本 / Ruby 指令片段 | [majiro](engines/majiro.md) |
 | Malie / 2008 UTF16 与 data5 EXEC | [malie](engines/malie.md) |
 | Masys / MEG 表达式字符串 | [masys](engines/masys.md) |
-| MED：头部定位的 NUL 文本表 | [med](engines/med.md) |
+| MED / MDE0 / MDN0：有界脚本归档与序号引用回写 | [med](engines/med.md) |
 | Melonpan / WCW TTD | [melonpan](engines/melonpan.md) |
 | Mirai / ACV1 script.dat | [mirai](engines/mirai.md) |
 | M no Violet / DAT、CScript | [mnoviolet](engines/mnoviolet.md) |
@@ -164,7 +171,7 @@ JIS 交付可将随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并
 | Musica：SC 消息、选择与文本转义 | [musica](engines/musica.md) |
 | Mware：Squirrel literal 与引用级克隆 | [mware](engines/mware.md) |
 | NEJII / CDT、144字节BIN | [nejii](engines/nejii.md) |
-| NekoSDK：ADVSCRIPT2 记录与 NEKOPACK4 容器 | [nekosdk](engines/nekosdk.md) |
+| NekoSDK：ADVSCRIPT2 显示与日志记录 | [nekosdk](engines/nekosdk.md) |
 | NeXAS：PAC 尾索引与 BIN 字符串池回填 | [nexas](engines/nexas.md) |
 | NonColor / legacy ACV | [noncolor](engines/noncolor.md) |
 | NScripter：容器可回写，文本仍须词法与命令边界审核 | [nscripter](engines/nscripter.md) |
@@ -176,7 +183,7 @@ JIS 交付可将随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并
 | QLIE：PACK 3.0 解包、ImoScripter 对白与模板重封包 | [qlie](engines/qlie.md) |
 | Ransel：BCD / BCL 配对归档 | [ransel](engines/ransel.md) |
 | RealLive：SEEN 容器、文本 token 与换行指令片段 | [reallive](engines/reallive.md) |
-| Ren'Py：有限 .rpy 词法与原位字符串回填 | [renpy](engines/renpy.md) |
+| Ren’Py：RPA/ARC3 归档与 RPYC2 编译脚本回填 | [renpy](engines/renpy.md) |
 | RPG Maker：MV JSON 与 VX Marshal 转换中间态 | [rpgmaker](engines/rpgmaker.md) |
 | rUGP：ReadEncrypted 块编解码与只读文本候选 | [rugp](engines/rugp.md) |
 | SakanaGL：SX 密码与已解码索引 | [sakanagl](engines/sakanagl.md) |
@@ -192,7 +199,7 @@ JIS 交付可将随包 [UIF x86 winmm.dll](assets/uif/README.md) 与配置一并
 | StudioPolaris：已解密 SCD_ 字节码 | [studiopolaris](engines/studiopolaris.md) |
 | Succubus：RIFF / VFA1 事件式归档 | [succubus](engines/succubus.md) |
 | SYSTEM-ε：BIN 文本段与候选跳转模式 | [system-epsilon](engines/system-epsilon.md) |
-| SystemC / SystemB3：ZLC2 literal 成员 | [systemc](engines/systemc.md) |
+| SystemC / SystemB3：FPK、ACT 与 UTF-8 TXD/PTR | [systemc](engines/systemc.md) |
 | SystemNNN：开发版定长槽与发布版 word 地址 | [systemnnn](engines/systemnnn.md) |
 | Tanaka：SCB1 模板重封与 BIN 文本记录 | [tanaka](engines/tanaka.md) |
 | TmrHiro：text 流的 i16 长度往返 | [tmrhiro](engines/tmrhiro.md) |

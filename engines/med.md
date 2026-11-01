@@ -1,11 +1,12 @@
-# MED / MDN0：有界脚本归档与序号引用回写
+# MED / MDE0 / MDN0：有界脚本归档与序号引用回写
 
 ## 入口与支持边界
 
 - [med_extract.py](../python/engines/med_extract.py) 提供 `extract` / `pack` 工作区流程；[归档实现](../python/archives/med.py) 与[脚本实现](../python/engines/med_script.py) 分层。
-- 当前完整路线是 **明文 `MDN0` + `med-framed-ordinal-v1`**：CP932 字符串池、带长度的指令帧、u16 字符串序号。常见剧情来源是 `md_scr.med`，必须同时通过归档及脚本结构校验，不能仅按后缀判断。
-- 不覆盖其他 `MDN*` 媒体包、加密脚本、未知 opcode/参数形状或不同字符串引用方式。错误中包含成员名、opcode 和代码偏移；先研究当前成员，不放宽校验强行导出。
-- 加密成员与不同容器 magic 的[研究资料](med/encrypted-members.md)单独记录，未改变明文 MDN0 工作流的支持范围。
+- 支持的容器同时包含 **明文 `MDN0`** 与**成员加密的 `MDE0`**；脚本语义仍只有一条已验证路线 `med-framed-ordinal-v1`：CP932 字符串池、带长度的指令帧、u16 字符串序号。常见剧情来源是 `md_scr.med`，必须同时通过归档及脚本结构校验，不能仅按后缀判断。
+- `MDE0` 的成员密钥一律由调用方显式给出（`--key ascii:..` 或 `hex:..`），本包不推导、不猜测、也不内置任何具体游戏的密钥；工作区只存密钥的 SHA-256，便于 `pack` 核对同一密钥。
+- 不覆盖其他 `MDN*` 媒体包、未知 opcode/参数形状或不同字符串引用方式。错误中包含成员名、opcode 和代码偏移；先研究当前成员，不放宽校验强行导出。
+- 成员加密的算法、相位与已知明文反推方法见[加密成员](med/encrypted-members.md)。
 - [旧 med.py](../python/engines/med.py) 仍保留无指令语义的 NUL 表定位和等字节长替换 API。旧 leaf 的变长限制不适用于已通过新 profile 的成员，也不能反过来用新 writer 处理仅通过旧边界公式的文件。
 
 ## Agent 操作流程
@@ -17,11 +18,18 @@ python -m python.engines.med_extract extract "GAME/md_scr.med" "GAME/GAME_extrac
 python -m python.engines.med_extract pack "GAME/GAME_extract" "NEW_REBUILD"
 ```
 
+`MDE0` 容器加同一把显式密钥；`extract` 不给密钥会直接报错，`pack` 的密钥必须与提取时一致：
+
+```console
+python -m python.engines.med_extract extract "GAME/md_scr.med" "GAME/GAME_extract" --key ascii:KEYKEY
+python -m python.engines.med_extract pack "GAME/GAME_extract" "NEW_REBUILD" --key ascii:KEYKEY
+```
+
 `extract` 会经过真实脚本 writer 和归档 writer，要求原文往返逐字节一致，再发布结果：
 
 | 路径 | 内容 |
 |---|---|
-| `original/<原归档名>`、`original/scripts/` | 原始归档及成员，不修改 |
+| `original/<原归档名>`、`original/scripts/` | 原始归档及容器内的原始成员字节，不修改 |
 | `gt_input/<成员名>.json` | 非空脚本的 UTF-8 平铺 JSON，姓名在正文前 |
 | `gt_output/` | 同名译文；未提供的成员保持原文 |
 | `metadata/` | 源哈希、指令偏移、角色、姓名引用和控制符 |
@@ -34,9 +42,24 @@ python -m python.engines.med_extract pack "GAME/GAME_extract" "NEW_REBUILD"
 
 ## 归档结构与边界
 
-`MDN0` 的头长 16 字节：偏移 4 为 u16 索引项宽度，偏移 6 为 u16 成员数，偏移 8–15 原样保留。索引从 **0x10** 开始，每项前 `width-8` 字节是 CP932/NUL 填充名字，末尾依次是 u32 长度、u32 绝对文件偏移。
+两种容器共用头和索引，只有 magic 与成员存放方式不同：
+
+| profile | magic | 成员 |
+|---|---|---|
+| `mdn0-plain-v1` | `MDN0` | 明文 |
+| `mde0-additive-member-v1` | `MDE0` | 加法成员编码，需显式密钥 |
+
+头长 16 字节：偏移 4 为 u16 索引项宽度，偏移 6 为 u16 成员数，偏移 8–15 原样保留。索引从 **0x10** 开始，每项前 `width-8` 字节是 CP932/NUL 填充名字，**末尾 8 字节固定是 u32 长度、u32 绝对文件偏移**。
+
+宽度大于 16 的条目（例如宽度 26：`name[14]` + 一个来源不明的 u32 + 长度 + 偏移）在长度前多一个 u32；它不是长度也不是偏移，取值随条目变化，**writer 必须原样保留**。按 `width-8` 读名字槽仍然安全：名字以 NUL 结束，该 u32 落在名字槽内，读长度/偏移的位置不变。
 
 索引读取接口先验证尺寸、路径、重名、重叠及成员预算，再读取 payload。当前归档上限 64 MiB、单成员 8 MiB、4096 项；超限直接说明阶段，不把被省略成员算作成功。只支持平铺名字。writer 保留索引顺序、名字原始槽、物理成员顺序、间隙和尾部，更新实际大小和偏移，并重新读取所有成员。
+
+### 成员编码（`MDE0`）
+
+`plain[p] = (coded[p] + key[(p - 0x10) % len(key)]) & 0xFF`，编码为减法；`p` 是**成员内偏移**，从第一个编码字节 `0x10` 起算相位。成员前 16 字节不参与变换，索引与尾部明文。相位从成员起点算（`p % len(key)`）是另一种错误排布，解出来仍是“像日文的垃圾”，必须按 `p - 0x10`。算法与反推过程见[加密成员](med/encrypted-members.md)。
+
+密钥只作为参数进入 `extract` / `pack` / `rebuild`；归档读写层不缓存、不写盘、也不从文件名或结构猜密钥。`rebuild` 在写回后会重新解码替换成员并与调用方的明文比对，密钥错时立即报错。
 
 ## 脚本结构
 
@@ -79,15 +102,19 @@ python -m python.engines.med_extract pack "GAME/GAME_extract" "NEW_REBUILD"
 
 ## 中文、部署与验证
 
-脚本 writer 只做严格 CP932 编码。中文优先沿用[公共 JIS 流程](../guides/jis-substitution.md)，不要给 MED 单独实现另一套 JIS 开关：
+脚本 writer 目前只做严格 CP932 编码。走 GBK/UTF-8 路线时，把同一套结构（长度、数量、序号）换成目标编码即可，本包**不内置** GBK writer——须在引擎侧扩展，并同样做"重解析 + 逐字节往返"与游戏内显示验证。不能改造引擎时，按下面的顺序退：
 
-1. agent 在工作副本调用 `python.common.jis_workflow.prepare`，将**全部原池和标签的解码文本**传入 `extra_texts` 预留字符，用户译文仍保留真实中文。
-2. 对 prepare 生成的 `workspace` 调用 MED `pack`；再用 MED `extract` 读取实际生成的归档到新目录。
-3. 用公共 `finalize` 对全部回读 JSON 核对代理文本和还原中文，生成同名归档、配置、映射及合适位数的 hook。固定映射冲突时可明确选择 `unused`，但此时不能声称预设替换字体兼容。
+1. **首选：把引擎读取的字符集改成 GBK/UTF-8 并重建字库。** 见[编码替换](../guides/charset-replacement.md)。确认引擎的字符串/字符判定按目标编码走、字库（含小字号点阵或纹理）已覆盖中文、UI 定长串已等长改写后，引擎侧 writer 用 GBK 写出即可，归档结构不变。
+2. 次选：脚本层整体改为引擎已支持的其它编码（UTF-16/UTF-8），需实测加载路径支持，并同步长度字段、指针和配套表。
+3. 兜底：容器与脚本保持 CP932，走[公共 JIS 流程](../guides/jis-substitution.md) 的代理映射 + hook/替换字体：
 
-不假设存在通用 `patch.med` 加载机制。交付的是同名完整剧情归档；备份和部署依授权处理，不覆盖原游戏。最终告诉用户配置所在位置，以及将兼容的 `winmm.dll` 与 `uif_config.json` 放到实际游戏 EXE 目录的用法；存在其他 hook 时先核对合并。字体路线必须是映射匹配的专用替换字体，普通日文或繁体字体无效。离线往返与中文还原不等于游戏内显示已验证。
+   1. agent 在工作副本调用 `python.common.jis_workflow.prepare`，将**全部原池和标签的解码文本**传入 `extra_texts` 预留字符，用户译文仍保留真实中文。
+   2. 对 prepare 生成的 `workspace` 调用 MED `pack`；再用 MED `extract` 读取实际生成的归档到新目录。
+   3. 用公共 `finalize` 对全部回读 JSON 核对代理文本和还原中文，生成同名归档、配置、映射及合适位数的 hook。固定映射冲突时可明确选择 `unused`，但此时不能声称预设替换字体兼容。
 
-[合成测试](../tests/test_med.py) 覆盖归档间隙/重封包、空脚本、帧/索引错误、姓名关联、原池复用隔离、变长引用、控制符、JIS 回读及工作区拒绝覆盖。新方言须先核实长度字段、引用基准和加载端读取方式，再添加独立 profile 或有证据的形状/语义；不按游戏名另建脚本。
+不假设存在通用 `patch.med` 加载机制。交付的是同名完整剧情归档；备份和部署依授权处理，不覆盖原游戏。走 JIS 兜底时告诉用户配置所在位置，以及将兼容的 `winmm.dll` 与 `uif_config.json` 放到实际游戏 EXE 目录的用法；存在其他 hook 时先核对合并。字体路线必须是映射匹配的专用替换字体，普通日文或繁体字体无效。离线往返与中文还原不等于游戏内显示已验证。
+
+[合成测试](../tests/test_med.py) 覆盖归档间隙/重封包、空脚本、帧/索引错误、姓名关联、原池复用隔离、变长引用、控制符、JIS 回读、加密成员的相位/密钥核对及工作区拒绝覆盖。新方言须先核实长度字段、引用基准和加载端读取方式，再添加独立 profile 或有证据的形状/语义；不按游戏名另建脚本。
 
 ## 来源与许可
 
